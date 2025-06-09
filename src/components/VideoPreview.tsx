@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { combineVideoAndAudio, initFFmpeg } from '../utils/ffmpeg';
+import { initFFmpeg } from '../utils/ffmpeg';
 import { generateSRT } from '../utils/subtitles';
 import { fetchFile } from '@ffmpeg/util';
 
@@ -27,28 +27,23 @@ export default function VideoPreview({ videoFile, audioUrl, script }: VideoPrevi
         const ffmpeg = await initFFmpeg();
         const audioBlob = await fetch(audioUrl).then(r => r.blob());
         
-        // Write all input files
         await Promise.all([
           ffmpeg.writeFile('input.mp4', await fetchFile(videoFile)),
           ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob)),
-          ffmpeg.writeFile('subtitles.srt', generateSRT(script, 0)) // Duration will be updated
+          ffmpeg.writeFile('subtitles.srt', generateSRT(script, 0)) 
         ]);
 
-        // Get audio duration
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         const arrayBuffer = await audioBlob.arrayBuffer();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
         const audioDuration = audioBuffer.duration;
 
-        // Update subtitles with correct duration
         await ffmpeg.writeFile('subtitles.srt', generateSRT(script, audioDuration));
         
-        // Set up progress monitoring
         ffmpeg.on('progress', ({ progress }) => {
           setProgress(Math.round(progress * 100));
         });
 
-        // Process video with subtitles
         await ffmpeg.exec([
           '-i', 'input.mp4',
           '-i', 'audio.mp3',

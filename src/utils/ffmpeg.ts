@@ -28,18 +28,15 @@ export const combineVideoAndAudio = async (
   const inputFiles = ['input.mp4', 'audio.mp3'];
   
   try {
-    // Write files to FFmpeg's virtual filesystem
     await Promise.all([
       ffmpeg.writeFile('input.mp4', await fetchFile(videoFile)),
       ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob))
     ]);
     
-    // Set up progress monitoring
     ffmpeg.on('progress', ({ progress }) => {
       if (onProgress) onProgress(Math.round(progress * 100));
     });
 
-    // Combine video and audio with optimized settings
     await ffmpeg.exec([
       '-i', 'input.mp4',
       '-i', 'audio.mp3',
@@ -73,19 +70,16 @@ export const addSubtitles = async (
   const inputFiles = ['input.mp4', 'subtitles.srt', 'OpenSans-B9K8.ttf'];
 
   try {
-    // Write all required files
     await Promise.all([
       ffmpeg.writeFile('input.mp4', await fetchFile(videoFile)),
       ffmpeg.writeFile('subtitles.srt', subtitles),
       ffmpeg.writeFile('OpenSans-B9K8.ttf', await fetchFile('/fonts/OpenSans-B9K8.ttf'))
     ]);
 
-    // Set up progress monitoring
     ffmpeg.on('progress', ({ progress }) => {
       if (onProgress) onProgress(Math.round(progress * 100));
     });
 
-    // Add subtitles with optimized settings
     await ffmpeg.exec([
       '-i', 'input.mp4',
       '-vf', "subtitles=subtitles.srt:force_style='FontSize=72,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=3,BorderStyle=4,Alignment=2,MarginV=50,BackColour=&H80000000,Encoding=1,FontFile=OpenSans-B9K8.ttf'",
