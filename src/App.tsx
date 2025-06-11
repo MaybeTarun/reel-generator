@@ -3,6 +3,21 @@ import { generateVoiceover } from './utils/api'
 import { initFFmpeg } from './utils/ffmpeg'
 import { fetchFile } from '@ffmpeg/util'
 import { generateSRT } from './utils/subtitles'
+import bgSvg from './assets/bg.svg'
+
+declare global {
+  interface Window {
+    showSaveFilePicker: (options?: SaveFilePickerOptions) => Promise<FileSystemFileHandle>
+  }
+}
+
+interface SaveFilePickerOptions {
+  suggestedName?: string
+  types?: Array<{
+    description: string
+    accept: Record<string, string[]>
+  }>
+}
 
 const backgroundVideos = import.meta.glob('/src/assets/backgrounds/*.mp4', { eager: true })
 
@@ -60,20 +75,17 @@ export default function App() {
     setFinalVideoUrl(null)
     
     try {
-      // Step 1: Get background video
       setProgress(5)
       const randomVideo = await getRandomVideo()
       if (!randomVideo) {
         throw new Error('Failed to get background video')
       }
       
-      // Step 2: Generate voiceover
       setProgress(10)
       const audioBlob = await generateVoiceover(script, (loaded, total) => {
         setProgress(10 + Math.round((loaded / total) * 20))
       })
 
-      // Step 3: Get audio duration and generate subtitles
       setProgress(30)
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
       const arrayBuffer = await audioBlob.arrayBuffer()
@@ -85,18 +97,15 @@ export default function App() {
         setTimestampContent(subtitles)
       }
       
-      // Step 4: Initialize FFmpeg
       setProgress(40)
       const ffmpeg = await initFFmpeg()
       
-      // Step 5: Combine video and audio first
       setProgress(50)
       await Promise.all([
         ffmpeg.writeFile('input.mp4', await fetchFile(randomVideo)),
         ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob))
       ])
 
-      // Combine video and audio
       await ffmpeg.exec([
         '-i', 'input.mp4',
         '-i', 'audio.mp3',
@@ -114,24 +123,24 @@ export default function App() {
 
       setProgress(70)
       
-      // Step 6: Add subtitles to the video with audio
       await ffmpeg.writeFile('subtitles.srt', subtitles)
+      console.log('SRT Content:', subtitles)
       
       console.log('Adding subtitles...')
       await ffmpeg.exec([
         '-i', 'temp_with_audio.mp4',
-        '-vf', `subtitles=subtitles.srt:force_style='FontName=Arial,FontSize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,BorderStyle=3,Alignment=2,MarginV=20'`,
+        '-vf', "subtitles=subtitles.srt:force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2'",
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-crf', '23',
         '-c:a', 'copy',
         '-movflags', '+faststart',
+        '-y',
         'output.mp4'
       ])
       
       setProgress(95)
       
-      // Step 7: Get final video
       const data = await ffmpeg.readFile('output.mp4')
       const videoUrl = URL.createObjectURL(new Blob([data], { type: 'video/mp4' }))
       setFinalVideoUrl(videoUrl)
@@ -139,7 +148,6 @@ export default function App() {
       setProgress(100)
       setActiveTab('timestamps')
 
-      // Cleanup
       try {
         await ffmpeg.deleteFile('input.mp4')
         await ffmpeg.deleteFile('audio.mp3')
@@ -147,7 +155,6 @@ export default function App() {
         await ffmpeg.deleteFile('temp_with_audio.mp4')
         await ffmpeg.deleteFile('output.mp4')
       } catch (cleanupError) {
-        // Silent cleanup error
       }
 
     } catch (err) {
@@ -158,10 +165,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8 flex flex-col items-center">
+    <div className="min-h-screen bg-gray-50 p-8 flex flex-col items-center" style={{ backgroundImage: `url(${bgSvg})`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
       <div className="w-full max-w-[1400px] mx-auto flex flex-col lg:flex-row items-center lg:items-stretch justify-center gap-8 lg:h-[calc(100vh-4rem)]">
         <div className={`flex-grow lg:flex-grow-0 flex items-center justify-center h-full w-full max-w-[600px]`}>
-          <div className="w-full bg-white p-6 rounded-lg shadow flex flex-col justify-between h-full">
+          <div className="w-full bg-white border border-[#00000028] p-6 shadow flex flex-col justify-between h-full">
             <div className="space-y-4 flex-grow flex flex-col">
               <div className="flex">
                 <button
@@ -185,7 +192,7 @@ export default function App() {
                     value={script}
                     onChange={(e) => setScript(e.target.value)}
                     placeholder="Enter your script here..."
-                    className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-grow"
+                    className="w-full p-2 border focus:ring-1 focus:ring-[#00000028] flex-grow"
                   />
                 </div>
               ) : (
@@ -194,14 +201,14 @@ export default function App() {
                     value={timestampContent || ''}
                     onChange={(e) => setTimestampContent(e.target.value)}
                     placeholder="Edit timestamps here..."
-                    className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-grow"
+                    className="w-full p-2 border focus:ring-1 focus:ring-[#00000028] flex-grow"
                     disabled={timestampContent === null}
                   />
                 </div>
               )}
 
               {error && (
-                <div className="p-3 bg-red-50 text-red-700 rounded-md mt-4">
+                <div className="p-3 bg-red-50 text-red-700 mt-4">
                   {error}
                 </div>
               )}
@@ -219,7 +226,7 @@ export default function App() {
 
         {processedVideoUrl && (
           <div className="flex-shrink-0 h-full flex items-center justify-center w-auto" style={{ aspectRatio: '9 / 16' }}>
-            <div className="bg-white p-6 rounded-lg shadow flex flex-col justify-between h-full">
+            <div className="bg-white border border-[#00000028] p-6 shadow flex flex-col justify-between h-full">
               <div className="flex-grow flex items-center justify-center">
                 <video
                   src={processedVideoUrl}
