@@ -15,7 +15,7 @@ const cleanupFFmpegFiles = async (ffmpeg: FFmpeg, files: string[]) => {
   try {
     await Promise.all(files.map(file => ffmpeg.deleteFile(file)));
   } catch (error) {
-    console.warn('Error cleaning up FFmpeg files:', error);
+    // Silent cleanup error
   }
 };
 
@@ -67,13 +67,12 @@ export const addSubtitles = async (
   onProgress?: (progress: number) => void
 ): Promise<Blob> => {
   const ffmpeg = await initFFmpeg();
-  const inputFiles = ['input.mp4', 'subtitles.srt', 'OpenSans-B9K8.ttf'];
+  const inputFiles = ['input.mp4', 'subtitles.srt'];
 
   try {
     await Promise.all([
       ffmpeg.writeFile('input.mp4', await fetchFile(videoFile)),
       ffmpeg.writeFile('subtitles.srt', subtitles),
-      ffmpeg.writeFile('OpenSans-B9K8.ttf', await fetchFile('/fonts/OpenSans-B9K8.ttf'))
     ]);
 
     ffmpeg.on('progress', ({ progress }) => {
@@ -82,15 +81,11 @@ export const addSubtitles = async (
 
     await ffmpeg.exec([
       '-i', 'input.mp4',
-      '-vf', "subtitles=subtitles.srt:force_style='FontSize=72,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=3,BorderStyle=4,Alignment=2,MarginV=50,BackColour=&H80000000,Encoding=1,FontFile=OpenSans-B9K8.ttf'",
+      '-vf', "subtitles=subtitles.srt:force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000'",
       '-c:v', 'libx264',
-      '-preset', 'medium',
-      '-crf', '18',
+      '-preset', 'ultrafast',
+      '-crf', '23',
       '-c:a', 'copy',
-      '-movflags', '+faststart',
-      '-tune', 'film',
-      '-profile:v', 'high',
-      '-level', '4.0',
       'output.mp4'
     ]);
 

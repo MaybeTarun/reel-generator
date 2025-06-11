@@ -43,7 +43,6 @@ export default function App() {
       const blob = await response.blob()
       return new File([blob], selectedVideo.split('/').pop() || 'background.mp4', { type: 'video/mp4' })
     } catch (err) {
-      console.error('Error loading video:', err)
       setError('Failed to load background video')
       return null
     }
@@ -61,47 +60,46 @@ export default function App() {
     setFinalVideoUrl(null)
     
     try {
-      console.log('Starting video generation process...')
-      
+      // Step 1: Get background video
+      setProgress(5)
       const randomVideo = await getRandomVideo()
       if (!randomVideo) {
         throw new Error('Failed to get background video')
       }
       
-      console.log('Step 1: Generating voiceover...')
+      // Step 2: Generate voiceover
+      setProgress(10)
       const audioBlob = await generateVoiceover(script, (loaded, total) => {
-        setProgress(Math.round((loaded / total) * 20))
+        setProgress(10 + Math.round((loaded / total) * 20))
       })
 
+      // Step 3: Get audio duration and generate subtitles
+      setProgress(30)
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
       const arrayBuffer = await audioBlob.arrayBuffer()
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
       const audioDuration = audioBuffer.duration
-      console.log('Audio duration:', audioDuration)
 
-      console.log('Step 2: Generating subtitles...')
       const subtitles = timestampContent !== null ? timestampContent : generateSRT(script, audioDuration)
       if (timestampContent === null) {
         setTimestampContent(subtitles)
       }
       
-      console.log('Step 3: Processing video...')
+      // Step 4: Initialize FFmpeg
+      setProgress(40)
       const ffmpeg = await initFFmpeg()
       
+      // Step 5: Combine video and audio first
+      setProgress(50)
       await Promise.all([
         ffmpeg.writeFile('input.mp4', await fetchFile(randomVideo)),
-        ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob)),
-        ffmpeg.writeFile('subtitles.srt', subtitles)
+        ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob))
       ])
 
-      ffmpeg.on('progress', ({ progress }) => {
-        setProgress(20 + Math.round(progress * 80))
-      })
-
+      // Combine video and audio
       await ffmpeg.exec([
         '-i', 'input.mp4',
         '-i', 'audio.mp3',
-        '-vf', "subtitles=subtitles.srt:force_style='FontSize=72,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=3,BorderStyle=4,Alignment=2,MarginV=50,BackColour=&H80000000'",
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-crf', '23',
@@ -111,9 +109,29 @@ export default function App() {
         '-map', '1:a:0',
         '-shortest',
         '-movflags', '+faststart',
+        'temp_with_audio.mp4'
+      ])
+
+      setProgress(70)
+      
+      // Step 6: Add subtitles to the video with audio
+      await ffmpeg.writeFile('subtitles.srt', subtitles)
+      
+      console.log('Adding subtitles...')
+      await ffmpeg.exec([
+        '-i', 'temp_with_audio.mp4',
+        '-vf', `subtitles=subtitles.srt:force_style='FontName=Arial,FontSize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,BorderStyle=3,Alignment=2,MarginV=20'`,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '23',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
         'output.mp4'
       ])
       
+      setProgress(95)
+      
+      // Step 7: Get final video
       const data = await ffmpeg.readFile('output.mp4')
       const videoUrl = URL.createObjectURL(new Blob([data], { type: 'video/mp4' }))
       setFinalVideoUrl(videoUrl)
@@ -121,8 +139,18 @@ export default function App() {
       setProgress(100)
       setActiveTab('timestamps')
 
+      // Cleanup
+      try {
+        await ffmpeg.deleteFile('input.mp4')
+        await ffmpeg.deleteFile('audio.mp3')
+        await ffmpeg.deleteFile('subtitles.srt')
+        await ffmpeg.deleteFile('temp_with_audio.mp4')
+        await ffmpeg.deleteFile('output.mp4')
+      } catch (cleanupError) {
+        // Silent cleanup error
+      }
+
     } catch (err) {
-      console.error('Error during processing:', err)
       setError(err instanceof Error ? err.message : 'Failed to generate video')
     } finally {
       setIsProcessing(false)
