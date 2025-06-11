@@ -16,6 +16,7 @@ export default function App() {
   const [availableVideos, setAvailableVideos] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState('script')
   const [timestampContent, setTimestampContent] = useState<string | null>(null)
+  const [processedVideoUrl, setProcessedVideoUrl] = useState<string | null>(null)
 
   useEffect(() => {
     const videoPaths = Object.keys(backgroundVideos)
@@ -33,10 +34,8 @@ export default function App() {
     }
 
     const unusedVideos = availableVideos.filter(video => !usedVideos.has(video))
-    
     const randomIndex = Math.floor(Math.random() * unusedVideos.length)
     const selectedVideo = unusedVideos[randomIndex]
-    
     setUsedVideos(prev => new Set([...prev, selectedVideo]))
     
     try {
@@ -118,8 +117,8 @@ export default function App() {
       const data = await ffmpeg.readFile('output.mp4')
       const videoUrl = URL.createObjectURL(new Blob([data], { type: 'video/mp4' }))
       setFinalVideoUrl(videoUrl)
+      setProcessedVideoUrl(videoUrl)
       setProgress(100)
-
       setActiveTab('timestamps')
 
     } catch (err) {
@@ -190,12 +189,12 @@ export default function App() {
           </div>
         </div>
 
-        {finalVideoUrl && (
+        {processedVideoUrl && (
           <div className="flex-shrink-0 h-full flex items-center justify-center w-auto" style={{ aspectRatio: '9 / 16' }}>
             <div className="bg-white p-6 rounded-lg shadow flex flex-col justify-between h-full">
               <div className="flex-grow flex items-center justify-center">
                 <video
-                  src={finalVideoUrl}
+                  src={processedVideoUrl}
                   controls
                   className="w-full h-full object-contain"
                 />
