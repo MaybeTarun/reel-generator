@@ -40,3 +40,29 @@ export const generateVoiceover = async (
   
     return new Blob(chunks, { type: 'audio/mpeg' });
   };
+export const generateVadooCaptions = async (videoUrl: string, theme: string = 'Hormozi_1', language: string = 'English') => {
+  const API_KEY = import.meta.env.VITE_VADOO_API_KEY
+  if (!API_KEY) {
+    throw new Error('Vadoo API key is missing')
+  }
+
+  const response = await fetch('https://viralapi.vadoo.tv/api/add_captions', {
+    method: 'POST',
+    headers: {
+      'X-API-KEY': API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      url: videoUrl,
+      theme,
+      language
+    })
+  })
+
+  if (!response.ok) {
+    throw new Error(`Vadoo API error: ${response.status} ${response.statusText}`)
+  }
+
+  const data = await response.json()
+  return data.vid
+}

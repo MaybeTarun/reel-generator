@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { generateVoiceover } from './utils/api'
 import { initFFmpeg } from './utils/ffmpeg'
 import { fetchFile } from '@ffmpeg/util'
@@ -26,7 +26,6 @@ const CATEGORIES = [
   { id: 'fortnite', name: 'Fortnite' }
 ] as const
 
-// Import videos from each category folder
 const categoryVideos = {
   satisfying: import.meta.glob('/src/assets/satisfying/*.mp4', { eager: true }),
   minecraft: import.meta.glob('/src/assets/minecraft/*.mp4', { eager: true }),
@@ -67,7 +66,6 @@ export default function App() {
   }
 
   const getRandomVideo = async () => {
-    // If custom video is uploaded, use it
     if (customVideo) {
       return customVideo
     }
@@ -79,12 +77,10 @@ export default function App() {
       return null
     }
 
-    // Initialize used videos set for this category if it doesn't exist
     if (!usedVideos[selectedCategory]) {
       setUsedVideos(prev => ({ ...prev, [selectedCategory]: new Set() }))
     }
 
-    // Reset used videos if all videos in this category have been used
     if (usedVideos[selectedCategory]?.size >= categoryVideosList.length) {
       setUsedVideos(prev => ({ ...prev, [selectedCategory]: new Set() }))
     }
@@ -121,68 +117,53 @@ export default function App() {
     setDebugLogs([])
     
     try {
-      addDebugLog('Starting video generation...')
+      addDebugLog('Initializing video generation process')
       setProgress(5)
       const randomVideo = await getRandomVideo()
       if (!randomVideo) {
         throw new Error('Failed to get background video')
       }
-      addDebugLog(`Selected video: ${randomVideo.name}`)
+      addDebugLog(`Background video selected: ${randomVideo.name}`)
       
       setProgress(10)
-      addDebugLog('Generating voiceover...')
+      addDebugLog('Generating voiceover audio')
       const audioBlob = await generateVoiceover(script, (loaded, total) => {
         setProgress(10 + Math.round((loaded / total) * 20))
-        addDebugLog(`Voiceover progress: ${Math.round((loaded / total) * 100)}%`)
       })
 
       setProgress(30)
-      addDebugLog('Processing audio duration...')
+      addDebugLog('Processing audio metadata')
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
       const arrayBuffer = await audioBlob.arrayBuffer()
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
       const audioDuration = audioBuffer.duration
 
-      // Format duration to HH:MM:SS,mmm format
       const formatTime = (seconds: number) => {
         const hours = Math.floor(seconds / 3600)
         const minutes = Math.floor((seconds % 3600) / 60)
         const secs = Math.floor(seconds % 60)
         const msecs = Math.floor((seconds % 1) * 1000)
-        
         return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${msecs.toString().padStart(3, '0')}`
       }
 
-      // Create a simple SRT format with the script
       const srt = `1\n${formatTime(0)} --> ${formatTime(audioDuration)}\n${script}`
       setSrtContent(srt)
-      addDebugLog('Generated SRT file')
+      addDebugLog('Subtitle file generated')
       
       setProgress(40)
-      addDebugLog('Initializing FFmpeg...')
+      addDebugLog('Initializing video processing engine')
       const ffmpeg = await initFFmpeg()
       
       setProgress(50)
-      addDebugLog('Writing files to FFmpeg...')
       try {
-        addDebugLog('Writing input video file...')
         await ffmpeg.writeFile('input.mp4', await fetchFile(randomVideo))
-        addDebugLog('Input video file written successfully')
-        
-        addDebugLog('Writing audio file...')
         await ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob))
-        addDebugLog('Audio file written successfully')
-        
-        addDebugLog('Writing subtitles file...')
         await ffmpeg.writeFile('subtitles.srt', srt)
-        addDebugLog('Subtitles file written successfully')
       } catch (writeError) {
-        addDebugLog('Error writing files: ' + (writeError as Error).message)
         throw writeError
       }
 
-      // Process video with audio and subtitles
-      addDebugLog('Adding audio and subtitles...')
+      addDebugLog('Processing video with audio and subtitles')
       try {
         await ffmpeg.exec([
           '-i', 'input.mp4',
@@ -199,36 +180,32 @@ export default function App() {
           '-movflags', '+faststart',
           'output.mp4'
         ])
-        addDebugLog('Audio and subtitles added')
       } catch (execError) {
-        addDebugLog('Error during processing: ' + (execError as Error).message)
         throw execError
       }
       
       setProgress(95)
-      addDebugLog('Reading final video...')
+      addDebugLog('Finalizing video output')
       const data = await ffmpeg.readFile('output.mp4')
       const videoUrl = URL.createObjectURL(new Blob([data], { type: 'video/mp4' }))
       setFinalVideoUrl(videoUrl)
       setProgress(100)
       setActiveTab('timestamps')
-      addDebugLog('Video generation complete!')
+      addDebugLog('Video generation completed successfully')
 
       try {
-        addDebugLog('Cleaning up temporary files...')
         await ffmpeg.deleteFile('input.mp4')
         await ffmpeg.deleteFile('audio.mp3')
         await ffmpeg.deleteFile('subtitles.srt')
         await ffmpeg.deleteFile('output.mp4')
-        addDebugLog('Cleanup complete')
       } catch (cleanupError) {
-        addDebugLog('Error during cleanup: ' + (cleanupError as Error).message)
+        addDebugLog('Warning: Temporary files cleanup failed')
       }
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate video'
       setError(errorMessage)
-      addDebugLog('Error: ' + errorMessage)
+      addDebugLog(`Error: ${errorMessage}`)
     } finally {
       setIsProcessing(false)
     }
