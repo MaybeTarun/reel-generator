@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { generateVoiceover } from './utils/api'
 import { initFFmpeg } from './utils/ffmpeg'
 import { fetchFile } from '@ffmpeg/util'
-import { generateSRT } from './utils/subtitles'
 import bgSvg from './assets/bg.svg'
 
 declare global {
@@ -19,7 +18,22 @@ interface SaveFilePickerOptions {
   }>
 }
 
-const backgroundVideos = import.meta.glob('/src/assets/backgrounds/*.mp4', { eager: true })
+const CATEGORIES = [
+  { id: 'satisfying', name: 'Satisfying' },
+  { id: 'minecraft', name: 'Minecraft' },
+  { id: 'subway', name: 'Subway Surfers' },
+  { id: 'gta', name: 'GTA' },
+  { id: 'fortnite', name: 'Fortnite' }
+] as const
+
+// Import videos from each category folder
+const categoryVideos = {
+  satisfying: import.meta.glob('/src/assets/satisfying/*.mp4', { eager: true }),
+  minecraft: import.meta.glob('/src/assets/minecraft/*.mp4', { eager: true }),
+  subway: import.meta.glob('/src/assets/subway/*.mp4', { eager: true }),
+  gta: import.meta.glob('/src/assets/gta/*.mp4', { eager: true }),
+  fortnite: import.meta.glob('/src/assets/fortnite/*.mp4', { eager: true })
+}
 
 export default function App() {
   const [script, setScript] = useState('')
@@ -27,31 +41,62 @@ export default function App() {
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null)
-  const [usedVideos, setUsedVideos] = useState<Set<string>>(new Set())
-  const [availableVideos, setAvailableVideos] = useState<string[]>([])
+  const [usedVideos, setUsedVideos] = useState<Record<string, Set<string>>>({})
   const [activeTab, setActiveTab] = useState('script')
-  const [timestampContent, setTimestampContent] = useState<string | null>(null)
-  const [processedVideoUrl, setProcessedVideoUrl] = useState<string | null>(null)
+  const [srtContent, setSrtContent] = useState<string>('')
+  const [selectedCategory, setSelectedCategory] = useState<string>('satisfying')
+  const [customVideo, setCustomVideo] = useState<File | null>(null)
+  const [showDebug, setShowDebug] = useState(false)
+  const [debugLogs, setDebugLogs] = useState<string[]>([])
 
-  useEffect(() => {
-    const videoPaths = Object.keys(backgroundVideos)
-    setAvailableVideos(videoPaths)
-  }, [])
+  const addDebugLog = (message: string) => {
+    setDebugLogs(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`])
+  }
+
+  const handleVideoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('video/')) {
+      setError('Please upload a video file')
+      return
+    }
+
+    setCustomVideo(file)
+    setError(null)
+  }
 
   const getRandomVideo = async () => {
-    if (availableVideos.length === 0) {
-      setError('No background videos available')
+    // If custom video is uploaded, use it
+    if (customVideo) {
+      return customVideo
+    }
+
+    const categoryVideosList = Object.keys(categoryVideos[selectedCategory as keyof typeof categoryVideos])
+    
+    if (categoryVideosList.length === 0) {
+      setError(`No videos available in ${selectedCategory} category`)
       return null
     }
 
-    if (usedVideos.size >= availableVideos.length) {
-      setUsedVideos(new Set())
+    // Initialize used videos set for this category if it doesn't exist
+    if (!usedVideos[selectedCategory]) {
+      setUsedVideos(prev => ({ ...prev, [selectedCategory]: new Set() }))
     }
 
-    const unusedVideos = availableVideos.filter(video => !usedVideos.has(video))
+    // Reset used videos if all videos in this category have been used
+    if (usedVideos[selectedCategory]?.size >= categoryVideosList.length) {
+      setUsedVideos(prev => ({ ...prev, [selectedCategory]: new Set() }))
+    }
+
+    const unusedVideos = categoryVideosList.filter(video => !usedVideos[selectedCategory]?.has(video))
     const randomIndex = Math.floor(Math.random() * unusedVideos.length)
     const selectedVideo = unusedVideos[randomIndex]
-    setUsedVideos(prev => new Set([...prev, selectedVideo]))
+    
+    setUsedVideos(prev => ({
+      ...prev,
+      [selectedCategory]: new Set([...prev[selectedCategory] || [], selectedVideo])
+    }))
     
     try {
       const response = await fetch(selectedVideo)
@@ -73,92 +118,117 @@ export default function App() {
     setError(null)
     setProgress(0)
     setFinalVideoUrl(null)
+    setDebugLogs([])
     
     try {
+      addDebugLog('Starting video generation...')
       setProgress(5)
       const randomVideo = await getRandomVideo()
       if (!randomVideo) {
         throw new Error('Failed to get background video')
       }
+      addDebugLog(`Selected video: ${randomVideo.name}`)
       
       setProgress(10)
+      addDebugLog('Generating voiceover...')
       const audioBlob = await generateVoiceover(script, (loaded, total) => {
         setProgress(10 + Math.round((loaded / total) * 20))
+        addDebugLog(`Voiceover progress: ${Math.round((loaded / total) * 100)}%`)
       })
 
       setProgress(30)
+      addDebugLog('Processing audio duration...')
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
       const arrayBuffer = await audioBlob.arrayBuffer()
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
       const audioDuration = audioBuffer.duration
 
-      const subtitles = timestampContent !== null ? timestampContent : generateSRT(script, audioDuration)
-      if (timestampContent === null) {
-        setTimestampContent(subtitles)
+      // Format duration to HH:MM:SS,mmm format
+      const formatTime = (seconds: number) => {
+        const hours = Math.floor(seconds / 3600)
+        const minutes = Math.floor((seconds % 3600) / 60)
+        const secs = Math.floor(seconds % 60)
+        const msecs = Math.floor((seconds % 1) * 1000)
+        
+        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${msecs.toString().padStart(3, '0')}`
       }
+
+      // Create a simple SRT format with the script
+      const srt = `1\n${formatTime(0)} --> ${formatTime(audioDuration)}\n${script}`
+      setSrtContent(srt)
+      addDebugLog('Generated SRT file')
       
       setProgress(40)
+      addDebugLog('Initializing FFmpeg...')
       const ffmpeg = await initFFmpeg()
       
       setProgress(50)
-      await Promise.all([
-        ffmpeg.writeFile('input.mp4', await fetchFile(randomVideo)),
-        ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob))
-      ])
+      addDebugLog('Writing files to FFmpeg...')
+      try {
+        addDebugLog('Writing input video file...')
+        await ffmpeg.writeFile('input.mp4', await fetchFile(randomVideo))
+        addDebugLog('Input video file written successfully')
+        
+        addDebugLog('Writing audio file...')
+        await ffmpeg.writeFile('audio.mp3', await fetchFile(audioBlob))
+        addDebugLog('Audio file written successfully')
+        
+        addDebugLog('Writing subtitles file...')
+        await ffmpeg.writeFile('subtitles.srt', srt)
+        addDebugLog('Subtitles file written successfully')
+      } catch (writeError) {
+        addDebugLog('Error writing files: ' + (writeError as Error).message)
+        throw writeError
+      }
 
-      await ffmpeg.exec([
-        '-i', 'input.mp4',
-        '-i', 'audio.mp3',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '23',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-shortest',
-        '-movflags', '+faststart',
-        'temp_with_audio.mp4'
-      ])
-
-      setProgress(70)
-      
-      await ffmpeg.writeFile('subtitles.srt', subtitles)
-      console.log('SRT Content:', subtitles)
-      
-      console.log('Adding subtitles...')
-      await ffmpeg.exec([
-        '-i', 'temp_with_audio.mp4',
-        '-vf', "subtitles=subtitles.srt:force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2'",
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '23',
-        '-c:a', 'copy',
-        '-movflags', '+faststart',
-        '-y',
-        'output.mp4'
-      ])
+      // Process video with audio and subtitles
+      addDebugLog('Adding audio and subtitles...')
+      try {
+        await ffmpeg.exec([
+          '-i', 'input.mp4',
+          '-i', 'audio.mp3',
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-crf', '23',
+          '-c:a', 'aac',
+          '-b:a', '192k',
+          '-vf', "subtitles=subtitles.srt:force_style='FontName=Arial,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,BorderStyle=3,Alignment=2'",
+          '-map', '0:v:0',
+          '-map', '1:a:0',
+          '-shortest',
+          '-movflags', '+faststart',
+          'output.mp4'
+        ])
+        addDebugLog('Audio and subtitles added')
+      } catch (execError) {
+        addDebugLog('Error during processing: ' + (execError as Error).message)
+        throw execError
+      }
       
       setProgress(95)
-      
+      addDebugLog('Reading final video...')
       const data = await ffmpeg.readFile('output.mp4')
       const videoUrl = URL.createObjectURL(new Blob([data], { type: 'video/mp4' }))
       setFinalVideoUrl(videoUrl)
-      setProcessedVideoUrl(videoUrl)
       setProgress(100)
       setActiveTab('timestamps')
+      addDebugLog('Video generation complete!')
 
       try {
+        addDebugLog('Cleaning up temporary files...')
         await ffmpeg.deleteFile('input.mp4')
         await ffmpeg.deleteFile('audio.mp3')
         await ffmpeg.deleteFile('subtitles.srt')
-        await ffmpeg.deleteFile('temp_with_audio.mp4')
         await ffmpeg.deleteFile('output.mp4')
+        addDebugLog('Cleanup complete')
       } catch (cleanupError) {
+        addDebugLog('Error during cleanup: ' + (cleanupError as Error).message)
       }
 
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate video')
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate video'
+      setError(errorMessage)
+      addDebugLog('Error: ' + errorMessage)
     } finally {
       setIsProcessing(false)
     }
@@ -172,15 +242,15 @@ export default function App() {
             <div className="space-y-4 flex-grow flex flex-col">
               <div className="flex">
                 <button
-                  className={`px-4 py-2 ${activeTab === 'script' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+                  className={`px-4 py-2 ${activeTab === 'script' ? 'border-b-2 border-accent text-accent' : 'text-gray-500'}`}
                   onClick={() => setActiveTab('script')}
                 >
                   Script
                 </button>
                 <button
-                  className={`px-4 py-2 ${activeTab === 'timestamps' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'} ${timestampContent === null ? 'cursor-not-allowed opacity-50' : ''}`}
-                  onClick={() => timestampContent !== null && setActiveTab('timestamps')}
-                  disabled={timestampContent === null}
+                  className={`px-4 py-2 ${activeTab === 'timestamps' ? 'border-b-2 border-accent text-accent' : 'text-gray-500'} ${!srtContent ? 'cursor-not-allowed opacity-50' : ''}`}
+                  onClick={() => srtContent && setActiveTab('timestamps')}
+                  disabled={!srtContent}
                 >
                   Timestamps
                 </button>
@@ -192,17 +262,17 @@ export default function App() {
                     value={script}
                     onChange={(e) => setScript(e.target.value)}
                     placeholder="Enter your script here..."
-                    className="w-full p-2 border focus:ring-1 focus:ring-[#00000028] flex-grow"
+                    className="w-full p-2 border focus:ring-1 focus:ring-accent flex-grow"
                   />
                 </div>
               ) : (
                 <div className="flex flex-col flex-grow">
                   <textarea
-                    value={timestampContent || ''}
-                    onChange={(e) => setTimestampContent(e.target.value)}
+                    value={srtContent}
+                    onChange={(e) => setSrtContent(e.target.value)}
                     placeholder="Edit timestamps here..."
-                    className="w-full p-2 border focus:ring-1 focus:ring-[#00000028] flex-grow"
-                    disabled={timestampContent === null}
+                    className="w-full p-2 border focus:ring-1 focus:ring-accent flex-grow"
+                    disabled={!srtContent}
                   />
                 </div>
               )}
@@ -214,22 +284,87 @@ export default function App() {
               )}
             </div>
 
-            <button
-              onClick={handleGenerate}
-              disabled={!script.trim() || isProcessing}
-              className="mt-4 w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
-            >
-              {isProcessing ? `Processing... ${progress}%` : 'Generate Reel'}
-            </button>
+            <div className="mt-4 space-y-4">
+              <div className="flex flex-col space-y-2">
+                <label className="text-sm font-medium text-gray-700">
+                  Select Category
+                </label>
+                <div className="flex justify-between pb-2">
+                  {CATEGORIES.map(category => (
+                    <button
+                      key={category.id}
+                      onClick={() => {
+                        setSelectedCategory(category.id)
+                        setCustomVideo(null)
+                      }}
+                      className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${
+                        selectedCategory === category.id
+                          ? 'bg-accent/10 text-accent font-medium'
+                          : 'bg-transparent text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {category.name}
+                    </button>
+                  ))}
+                  <label className="cursor-pointer flex-shrink-0">
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={handleVideoUpload}
+                      className="hidden"
+                    />
+                    <div className="p-2 rounded-full border-2 hover:bg-gray-200 transition-colors flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                    </div>
+                  </label>
+                </div>
+                {customVideo && (
+                  <p className="text-sm text-gray-500">
+                    Using custom video: {customVideo.name}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <button
+                  onClick={handleGenerate}
+                  disabled={!script.trim() || isProcessing}
+                  className="w-full bg-accent text-white py-2 px-4 rounded hover:brightness-90 disabled:bg-gray-400 transition-all"
+                >
+                  {isProcessing ? `Processing... ${progress}%` : 'Generate Reel'}
+                </button>
+                
+                {isProcessing && (
+                  <button
+                    onClick={() => setShowDebug(!showDebug)}
+                    className="text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    {showDebug ? 'Hide Debug Logs' : 'Show Debug Logs'}
+                  </button>
+                )}
+                
+                {showDebug && isProcessing && (
+                  <div className="mt-2 p-2 bg-gray-50 rounded text-xs font-mono overflow-auto max-h-40">
+                    {debugLogs.map((log, index) => (
+                      <div key={index} className="text-gray-600">
+                        {log}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
-        {processedVideoUrl && (
+        {finalVideoUrl && (
           <div className="flex-shrink-0 h-full flex items-center justify-center w-auto" style={{ aspectRatio: '9 / 16' }}>
             <div className="bg-white border border-[#00000028] p-6 shadow flex flex-col justify-between h-full">
               <div className="flex-grow flex items-center justify-center">
                 <video
-                  src={processedVideoUrl}
+                  src={finalVideoUrl}
                   controls
                   className="w-full h-full object-contain"
                 />
